@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Second Brain — job hunt memory</title>
+<style>
+  :root{
+    --bg:#0a0a0a; --panel:#111214; --border:#23262a; --text:#ececec;
+    --muted:#8b8f96; --green:#22c55e; --amber:#f5a524; --red:#ef4444;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);
+       font-family:-apple-system,BlinkMacSystemFont,"Inter","Segoe UI",sans-serif;
+       font-size:14px;line-height:1.5}
+  header{display:flex;justify-content:space-between;align-items:baseline;
+         padding:20px 28px;border-bottom:1px solid var(--border)}
+  header h1{font-size:17px;font-weight:650;letter-spacing:-.01em}
+  header p{color:var(--muted);font-size:12.5px}
+  main{max-width:1120px;margin:0 auto;padding:24px 28px 60px;
+       display:grid;gap:20px;grid-template-columns:repeat(12,1fr)}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:8px;
+        padding:18px 20px}
+  .card h2{font-size:12px;font-weight:600;text-transform:uppercase;
+           letter-spacing:.08em;color:var(--muted);margin-bottom:14px}
+  .stats{grid-column:span 12;display:grid;gap:12px;
+         grid-template-columns:repeat(5,1fr)}
+  .stat{background:var(--panel);border:1px solid var(--border);border-radius:8px;
+        padding:16px 18px}
+  .stat .n{font-size:28px;font-weight:700;letter-spacing:-.02em}
+  .stat .l{color:var(--muted);font-size:12px;margin-top:2px}
+  .ask{grid-column:span 12}
+  .askrow{display:flex;gap:10px}
+  input[type=text]{flex:1;background:#0d0e10;border:1px solid var(--border);
+    color:var(--text);border-radius:6px;padding:10px 14px;font-size:14px}
+  input[type=text]:focus{outline:none;border-color:#4a4e54}
+  button{background:#ececec;color:#0a0a0a;border:none;border-radius:6px;
+    padding:10px 20px;font-size:14px;font-weight:600;cursor:pointer}
+  button:hover{background:#fff}
+  button:disabled{opacity:.5;cursor:default}
+  #answer{margin-top:14px;padding:14px 16px;background:#0d0e10;
+    border:1px solid var(--border);border-radius:6px;white-space:pre-wrap;
+    display:none}
+  .followups{grid-column:span 5}.timeline{grid-column:span 7}
+  .row{display:flex;gap:12px;padding:10px 0;border-top:1px solid var(--border);
+       align-items:flex-start}
+  .row:first-of-type{border-top:none}
+  .chip{flex:none;font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px;
+        margin-top:2px}
+  .chip.app{background:#0d2b1a;color:var(--green)}
+  .chip.lead{background:#2b1f0d;color:var(--amber)}
+  .chip.event{background:#2b1212;color:var(--red)}
+  .row .t{font-weight:600;font-size:13.5px}
+  .row .d{color:var(--muted);font-size:12.5px}
+  .row .a{color:var(--amber);font-size:12px;font-weight:600}
+  .meta{color:var(--muted);font-size:12px;margin-top:2px}
+  .empty{color:var(--muted);padding:16px 0}
+  .loading{color:var(--muted);padding:16px 0}
+  @media(max-width:800px){.followups,.timeline{grid-column:span 12}
+    .stats{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Second Brain</h1>
+    <p>persistent memory for the job hunt · FalkorDB track entry</p>
+  </div>
+  <p id="dateline">—</p>
+</header>
+<main>
+  <section class="stats" id="stats">
+    <div class="stat"><div class="n" data-s="applications_total">–</div><div class="l">applications tracked</div></div>
+    <div class="stat"><div class="n" data-s="applications_submitted">–</div><div class="l">submitted</div></div>
+    <div class="stat"><div class="n" data-s="leads_total">–</div><div class="l">leads filed</div></div>
+    <div class="stat"><div class="n" data-s="leads_contact_ready">–</div><div class="l">contact-ready leads</div></div>
+    <div class="stat"><div class="n" data-s="companies_total">–</div><div class="l">companies</div></div>
+  </section>
+
+  <section class="card ask">
+    <h2>Ask the brain</h2>
+    <div class="askrow">
+      <input type="text" id="q" placeholder="who owes me a reply? · which leads are going cold? · how many rejections this week?"
+             onkeydown="if(event.key==='Enter')ask()">
+      <button id="askbtn" onclick="ask()">Ask</button>
+    </div>
+    <div id="answer"></div>
+  </section>
+
+  <section class="card followups">
+    <h2>Follow-up queue</h2>
+    <div id="followups"><div class="loading">loading…</div></div>
+  </section>
+
+  <section class="card timeline">
+    <h2>Timeline</h2>
+    <div id="timeline"><div class="loading">loading…</div></div>
+  </section>
+</main>
+
+<script>
+async function get(url){
+  const r = await fetch(url);
+  if(!r.ok) throw new Error("HTTP "+r.status);
+  return r.json();
+}
+function esc(s){return (s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))}
+
+get("/api/stats").then(s=>{
+  document.querySelectorAll("[data-s]").forEach(el=>{
+    el.textContent = s[el.dataset.s] ?? "–";
+  });
+}).catch(()=>{document.getElementById("stats").innerHTML='<div class="empty">stats unavailable — is the API running?</div>'});
+
+get("/api/followups").then(d=>{
+  const box=document.getElementById("followups");
+  if(!d.followups.length){box.innerHTML='<div class="empty">Nothing needs action. The pipeline is quiet.</div>';return}
+  box.innerHTML=d.followups.map(f=>`
+    <div class="row"><span class="chip ${f.type}">${esc(f.type)}</span>
+      <div><div class="t">${esc(f.title)}</div>
+      <div class="d">${esc(f.detail)}</div>
+      <div class="a">→ ${esc(f.action)}</div></div></div>`).join("");
+}).catch(()=>{document.getElementById("followups").innerHTML='<div class="empty">could not load follow-ups</div>'});
+
+get("/api/timeline").then(d=>{
+  const box=document.getElementById("timeline");
+  if(!d.timeline.length){box.innerHTML='<div class="empty">No pipeline events yet.</div>';return}
+  box.innerHTML=d.timeline.map(t=>`
+    <div class="row"><span class="chip ${t.kind}">${esc(t.kind)}</span>
+      <div><div class="t">${esc(t.title)}</div>
+      <div class="d">${esc(t.detail)}</div>
+      <div class="meta">${esc(t.date)}</div></div></div>`).join("");
+}).catch(()=>{document.getElementById("timeline").innerHTML='<div class="empty">could not load timeline</div>'});
+
+async function ask(){
+  const q=document.getElementById("q").value.trim();
+  if(!q) return;
+  const btn=document.getElementById("askbtn"), ans=document.getElementById("answer");
+  btn.disabled=true; ans.style.display="block"; ans.textContent="thinking…";
+  try{
+    const r=await fetch("/api/ask",{method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({question:q})});
+    const d=await r.json();
+    ans.textContent=d.answer||"no answer returned";
+  }catch(e){ ans.textContent="the brain is unreachable — check the API"; }
+  btn.disabled=false;
+}
+
+document.getElementById("dateline").textContent =
+  new Date().toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short"});
+</script>
+</body>
+</html>

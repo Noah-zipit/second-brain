@@ -1,0 +1,5 @@
+fastapi>=0.110
+uvicorn>=0.29
+# falkordb — needed only on Day 2+ when FalkorDBStore is implemented:
+# falkordb>=1.0
+# The Groq agent uses the user's stored connector CLI (stdlib urllib), no key needed.
