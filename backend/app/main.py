@@ -7,6 +7,7 @@ POST /api/ask        {"question": "..."} -> grounded answer
 GET  /               dashboard UI
 """
 
+import os
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -14,8 +15,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from app.store import JsonStore  # Day 2: swap to FalkorDBStore
-# from app.store import FalkorDBStore as Store
+from app.store import FalkorDBStore, JsonStore
 from app.agent import answer
 
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -26,8 +26,18 @@ app = FastAPI(title="Second Brain", version="0.1.0")
 app.mount("/ui", StaticFiles(directory=UI_DIR), name="ui")
 
 
-def store() -> JsonStore:
-    return JsonStore(STORE_PATH)
+def store():
+    """FalkorDB is the live store (Day 2). JsonStore remains the durable
+    source of truth for migrations and the offline fallback."""
+    try:
+        return FalkorDBStore(
+            uri=os.environ.get("FALKORDB_URI") or None,
+            host=os.environ.get("FALKORDB_HOST", "localhost"),
+            port=int(os.environ.get("FALKORDB_PORT", "6379")),
+        )
+    except Exception as e:  # FalkorDB down -> keep the API serving from JSON
+        print(f"[second-brain] FalkorDB unreachable ({e}); using JsonStore")
+        return JsonStore(STORE_PATH)
 
 
 class AskRequest(BaseModel):
