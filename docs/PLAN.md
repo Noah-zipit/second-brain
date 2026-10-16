@@ -23,9 +23,20 @@ Track: **Agent Memory and Coordination** (Graph Hacks, Oct 15–18)
 
 ## Day 3 — Fri Oct 16 (agent depth)
 
-- [ ] Memory-aware agent: writes new facts back to the graph (learned entities/edges)
-- [ ] Follow-up coordination: multi-step outreach plans as graph paths
-- [ ] Follow-up cadence logic (e.g. nudge rules per lead score/age)
+- [x] Memory-aware agent: writes new facts back to the graph (learned entities/edges)
+  - `Agent.ask` → `learn` → Groq JSON fact extraction → `Memory` nodes /
+    follow-up `Event`s / status changes, all via `FalkorDBStore`;
+    deterministic qa-log fallback when the LLM is down
+- [x] Follow-up coordination: multi-step outreach plans as graph paths
+  - `record_followup` chains `subject -> e1 -> e2 -> …` via `FOLLOWED_UP_BY`;
+    `followup_plan` / `Agent.what_next` answer "what next and why" by walking
+    the path; new API: `GET /api/next?q=…`, `GET /api/nudge`
+- [x] Follow-up cadence logic (nudge rules per lead score/age)
+  - `backend/app/nudge.py`: pure `days_since`/`classify_lead`/
+    `classify_application`/`next_step` + Cypher-backed `nudge_queue`;
+    17 live-graph tests, all green (tests fail if the graph is unreachable)
+- [x] Counts held: 109 applications / 107 leads / 92 companies; live nudge
+  queue on real data: 56 nudge / 25 drop / 26 wait
 
 ## Day 4 — Sat Oct 17 (demo + polish)
 

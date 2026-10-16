@@ -62,10 +62,20 @@ Anything that happened: rejection, reply, bounce, DM sent.
 | property  | type     | description                              |
 |-----------|----------|------------------------------------------|
 | id        | string   | `event:<n>`                              |
-| kind      | string   | rejected / replied / bounced / dm_sent / note |
+| kind      | string   | rejected / replied / bounced / dm_sent / note / status_change |
 | subject   | string   | human-readable summary                   |
 | note      | string   | detail                                   |
-| date      | date     |                                          |
+| date      | string   | ISO `YYYY-MM-DD`                         |
+
+### Memory (Day 3)
+A durable fact the agent learned from an answered question — written back
+to the graph so future answers remember it.
+| property  | type   | description                          |
+|-----------|--------|--------------------------------------|
+| id        | string | `memory:<n>`                         |
+| text      | string | the fact itself                      |
+| topic     | string | short topic tag (e.g. `qa-log`)      |
+| date      | string | ISO `YYYY-MM-DD` learned on          |
 
 ## Edge types
 
@@ -77,6 +87,26 @@ Anything that happened: rejection, reply, bounce, DM sent.
 | REJECTED_BY    | Application → Company  | date                    | company rejected the application     |
 | FOLLOW_UP_DUE  | Application/Lead → due | due_date, reason        | something needs a nudge              |
 | REFERRED_BY    | Application → Person   | note                    | came via this person                 |
+| FOLLOWED_UP_BY | Subject → Event → Event… | date                  | outreach plan as a graph path: each step chains onto the previous tip, so walking the path replays the plan |
+
+## Day-3 additions (Oct 16)
+
+- `Memory` nodes: agent write-back — answered questions distill durable facts
+  (via Groq JSON extraction, deterministic qa-log fallback) and persist them;
+  `build_context` reads them back, closing the learn loop.
+- `record_followup(subject_id, kind, note, date)`: creates an `Event` and
+  chains it onto the subject's `FOLLOWED_UP_BY` tip
+  (`subject -> e1 -> e2 -> …`).
+- `followup_chain(subject_id)`: walks the path oldest-first (Cypher
+  variable-length traversal ordered by path length).
+- `lead_touch_state()`: per-lead `{last_touch, touches}` straight from Cypher
+  — the "when" behind the nudge rules.
+- `update_application_status(...)`: sets status AND records the change as a
+  chain step (status changes are follow-ups too).
+- `backend/app/nudge.py`: pure `days_since` / `classify_lead` /
+  `classify_application` / `next_step` + graph-backed `nudge_queue` /
+  `followup_plan`. The agent's `what_next` answers "what should I do next and
+  why" from the walked path.
 
 ## Day-1 JSON mapping
 

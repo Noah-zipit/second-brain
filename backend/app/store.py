@@ -54,6 +54,35 @@ class AbstractStore(ABC):
     def timeline(self, limit=50):
         """Chronological applications + leads + events, newest first."""
 
+    # -- Day 3 (Oct 16): agent write-back + follow-up coordination -----------
+    @abstractmethod
+    def add_memory(self, text, topic, date):
+        """Store a learned fact (Memory node). Returns the memory id."""
+
+    @abstractmethod
+    def memories(self, limit=20):
+        """Learned facts, newest first."""
+
+    @abstractmethod
+    def record_followup(self, subject_id, kind, note, date):
+        """Record a follow-up step: creates an Event and chains it onto the
+        subject's FOLLOWED_UP_BY path (subject -> e1 -> e2 -> ...).
+        Returns the event id."""
+
+    @abstractmethod
+    def followup_chain(self, subject_id):
+        """Walk the subject's FOLLOWED_UP_BY chain, oldest step first."""
+
+    @abstractmethod
+    def lead_touch_state(self):
+        """Per-lead graph state for nudge rules: id, name, score,
+        sweep_date, last_touch (date or None), touches (count)."""
+
+    @abstractmethod
+    def update_application_status(self, app_id, new_status, note, date):
+        """Set an application's status AND record the change as a
+        follow-up step on its chain. Returns the event id."""
+
 
 class JsonStore(AbstractStore):
     """File-backed store (data/store.json). The real Day-1 implementation."""
@@ -181,6 +210,68 @@ class JsonStore(AbstractStore):
                          "title": e["subject"], "detail": e["kind"]})
         rows.sort(key=lambda r: r["date"] or "", reverse=True)
         return rows[:limit]
+    # -- Day 3: write-back + follow-up coordination (JSON mirror) -----------
+    def add_memory(self, text, topic, date):
+        mems = self.db.setdefault("memories", [])
+        mid = f"memory:{len(mems)}"
+        mems.append({"id": mid, "text": text, "topic": topic, "date": date})
+        return mid
+
+    def memories(self, limit=20):
+        mems = sorted(self.db.get("memories", []),
+                      key=lambda m: (m.get("date") or "", m["id"]), reverse=True)
+        return mems[:limit]
+
+    def record_followup(self, subject_id, kind, note, date):
+        known = ({a["id"] for a in self.db["applications"]}
+                 | {l["id"] for l in self.db["leads"]}
+                 | {c["id"] for c in self.db["companies"]})
+        if subject_id not in known:
+            raise ValueError(f"unknown subject id: {subject_id}")
+        eid = self.add_event(kind, subject_id, note, date)
+        # Chain tip: last event on the subject's path (itself if none yet).
+        chain = self.followup_chain(subject_id)
+        prev = chain[-1]["id"] if chain else subject_id
+        self.db["edges"].append({
+            "type": "FOLLOWED_UP_BY",
+            "from": prev, "to": eid, "props": {"date": date},
+        })
+        return eid
+
+    def followup_chain(self, subject_id):
+        by_from = {}
+        for e in self.db["edges"]:
+            if e["type"] == "FOLLOWED_UP_BY":
+                by_from[e["from"]] = e["to"]
+        events = {e["id"]: e for e in self.db["events"]}
+        chain, cur = [], by_from.get(subject_id)
+        seen = set()
+        while cur and cur not in seen:
+            seen.add(cur)
+            if cur in events:
+                chain.append(events[cur])
+            cur = by_from.get(cur)
+        return chain
+
+    def lead_touch_state(self):
+        rows = []
+        for lead in self.db["leads"]:
+            chain = self.followup_chain(lead["id"])
+            rows.append({
+                "id": lead["id"], "name": lead["name"],
+                "score": lead["score"], "sweep_date": lead["sweep_date"],
+                "last_touch": chain[-1]["date"] if chain else None,
+                "touches": len(chain),
+            })
+        return rows
+
+    def update_application_status(self, app_id, new_status, note, date):
+        app = next((a for a in self.db["applications"] if a["id"] == app_id),
+                   None)
+        if app is None:
+            raise ValueError(f"unknown application id: {app_id}")
+        app["status"] = new_status
+        return self.record_followup(app_id, "status_change", note, date)
 
 
 class FalkorDBStore(AbstractStore):
@@ -380,3 +471,78 @@ class FalkorDBStore(AbstractStore):
                          "title": e["subject"], "detail": e["kind"]})
         rows.sort(key=lambda r: r["date"] or "", reverse=True)
         return rows[:limit]
+
+    # -- Day 3: write-back + follow-up coordination (Cypher) ----------------
+    # Graph model additions:
+    #   (:Memory {id, text, topic, date})
+    #   (subject)-[:FOLLOWED_UP_BY {date}]->(:Event), chained as
+    #   subject -> e1 -> e2 -> e3, so each outreach plan IS a graph path.
+
+    def add_memory(self, text, topic, date):
+        n = self._q("MATCH (m:Memory) RETURN count(m)")[0][0]
+        mid = f"memory:{n}"
+        self._q("CREATE (m:Memory {id: $mid, text: $text, topic: $topic, "
+                "date: $date})",
+                {"mid": mid, "text": text, "topic": topic, "date": date})
+        return mid
+
+    def memories(self, limit=20):
+        return [self._props(r[0]) for r in self._q(
+            "MATCH (m:Memory) RETURN m ORDER BY m.date DESC, m.id DESC "
+            "LIMIT $limit", {"limit": int(limit)})]
+
+    def record_followup(self, subject_id, kind, note, date):
+        n = self._q("MATCH (e:Event) RETURN count(e)")[0][0]
+        eid = f"event:{n}"
+        created = self._q(
+            "MATCH (s) WHERE s.id = $sid "
+            "CREATE (e:Event {id: $eid, kind: $kind, subject: $sid, "
+            "note: $note, date: $date}) "
+            "RETURN e.id",
+            {"sid": subject_id, "eid": eid, "kind": kind,
+             "note": note, "date": date})
+        if not created:
+            raise ValueError(f"unknown subject id: {subject_id}")
+        # Chain tip: the event on this subject's path with no outgoing step.
+        tip = self._q(
+            "MATCH (s) WHERE s.id = $sid "
+            "OPTIONAL MATCH (prev:Event) "
+            "WHERE (s)-[:FOLLOWED_UP_BY*]->(prev) "
+            "  AND NOT (prev)-[:FOLLOWED_UP_BY]->(:Event) "
+            "RETURN prev.id ORDER BY prev.date DESC LIMIT 1",
+            {"sid": subject_id})
+        from_id = tip[0][0] if tip and tip[0][0] else subject_id
+        self._q(
+            "MATCH (f) WHERE f.id = $fid "
+            "MATCH (e:Event {id: $eid}) "
+            "CREATE (f)-[:FOLLOWED_UP_BY {date: $date}]->(e)",
+            {"fid": from_id, "eid": eid, "date": date})
+        return eid
+
+    def followup_chain(self, subject_id):
+        return [self._props(r[0]) for r in self._q(
+            "MATCH p = (s {id: $sid})-[:FOLLOWED_UP_BY*]->(e:Event) "
+            "WITH e, min(length(p)) AS depth "
+            "RETURN e ORDER BY depth", {"sid": subject_id})]
+
+    def lead_touch_state(self):
+        out = []
+        for r in self._q(
+                "MATCH (l:Lead) "
+                "OPTIONAL MATCH (l)-[:FOLLOWED_UP_BY*]->(e:Event) "
+                "WITH l, max(e.date) AS last_touch, count(e) AS touches "
+                "RETURN l.id, l.name, l.score, l.sweep_date, "
+                "last_touch, touches"):
+            out.append({
+                "id": r[0], "name": r[1], "score": r[2],
+                "sweep_date": r[3], "last_touch": r[4], "touches": r[5],
+            })
+        return out
+
+    def update_application_status(self, app_id, new_status, note, date):
+        rows = self._q("MATCH (a:Application {id: $aid}) "
+                       "SET a.status = $ns RETURN a.id",
+                       {"aid": app_id, "ns": new_status})
+        if not rows:
+            raise ValueError(f"unknown application id: {app_id}")
+        return self.record_followup(app_id, "status_change", note, date)
