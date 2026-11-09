@@ -28,14 +28,14 @@ it runs against the real job-hunt pipeline (100+ applications, dozens of leads).
                           ┌────────────────┼────────────────┐
                           │ Day 1 (Oct 14) │ Day 2 (Oct 15+)│
                           ▼                ▼                ▼
-                    JsonStore (live)  FalkorDBStore (stub → real)
+                    JsonStore (fallback)  FalkorDBStore (live)
 ```
 
-- **Day 1 (today):** `JsonStore` — a real, working file-backed store in `data/store.json`,
+- **Day 1 (Oct 14):** `JsonStore` — a real, working file-backed store in `data/store.json`,
   seeded from the real pipeline (`applied.json`, daily lead files).
-- **During the Graph Hacks window (Oct 15–18):** `FalkorDBStore` implements the same
-  `AbstractStore` interface against FalkorDB via Cypher. The stub already defines every
-  method with its Cypher sketched in comments — swap one line in `main.py` to migrate.
+- **Day 2 (Oct 15+):** `FalkorDBStore` implements the same `AbstractStore` interface
+  against FalkorDB via Cypher and is now the live store — `main.py` tries it first and
+  falls back to `JsonStore` when the graph is unreachable.
 
 ## Quickstart
 
@@ -50,11 +50,12 @@ uvicorn app.main:app --reload --port 8000
 # 3. Open http://localhost:8000 — ask the brain anything
 ```
 
-### FalkorDB (Day 2+, during the event window)
+### FalkorDB (Day 2+, live store)
 
 ```bash
 docker-compose up -d          # FalkorDB on :6379
-# implement FalkorDBStore in backend/app/store.py, flip STORE= in main.py
+# FalkorDBStore is the live store; JsonStore is the offline fallback.
+# Override the connection with FALKORDB_HOST / FALKORDB_PORT or FALKORDB_URI.
 ```
 
 ## API
@@ -65,6 +66,9 @@ docker-compose up -d          # FalkorDB on :6379
 | GET    | /api/followups  | Items needing action right now           |
 | GET    | /api/timeline   | Chronological pipeline events            |
 | POST   | /api/ask        | Ask the brain: `{"question": "..."}`     |
+| GET    | /api/search     | Search companies, leads and events (`?q=...`) |
+| GET    | /api/next       | What to do next about `?q=<name>`, and why |
+| GET    | /api/nudge      | Lead nudge queue with per-lead decisions  |
 
 ## Repo pattern contract
 

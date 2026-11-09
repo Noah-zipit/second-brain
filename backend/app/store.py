@@ -2,9 +2,9 @@
 
 Day 1 (Oct 14): JsonStore — real, working, file-backed store.
 Day 2 (Oct 15–18, Graph Hacks window): FalkorDBStore implements the same
-AbstractStore interface against FalkorDB via Cypher. The event rule requires
-the graph implementation to be new work done during the window, so the stub
-below only sketches the Cypher per method — nothing executes yet.
+AbstractStore interface against FalkorDB via Cypher and is the live store;
+JsonStore remains the durable source of truth for migrations and the
+offline fallback when the graph is unreachable.
 """
 
 from __future__ import annotations
